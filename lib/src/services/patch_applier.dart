@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:sqlite3/sqlite3.dart' as sqlite3;
+import 'package:seforim_library_updater/src/sqlite/sqlite3_api.dart' as sqlite3;
 
 import '../models/delta_manifest.dart';
 import '../models/patch_table_spec.dart';
