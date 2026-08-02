@@ -222,7 +222,28 @@ void main() {
       expect(
         () =>
             _applier.apply(dbPath: base, patchPath: patch, manifest: manifest),
-        throwsA(isA<PatchApplyException>()),
+        throwsA(isA<PatchApplyException>()
+            .having((e) => e.isContentMismatch, 'isContentMismatch', isFalse)),
+      );
+      expect(_hashOf(base), beforeHash);
+    });
+
+    test('fromContentHash לא תואם → isContentMismatch וה-DB לא משתנה', () {
+      final base = buildBaseDb(version: 1, sourceRows: [
+        [1, 'a'],
+      ]);
+      final beforeHash = _hashOf(base);
+      final patch = buildPatchDb(from: 1, to: 2, upsertSource: [
+        [2, 'b'],
+      ]);
+      final manifest =
+          _manifest(from: 1, to: 2, fromHash: 'diverged', toHash: 'irrelevant');
+
+      expect(
+        () =>
+            _applier.apply(dbPath: base, patchPath: patch, manifest: manifest),
+        throwsA(isA<PatchApplyException>()
+            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)),
       );
       expect(_hashOf(base), beforeHash);
     });
@@ -245,7 +266,8 @@ void main() {
       expect(
         () =>
             _applier.apply(dbPath: base, patchPath: patch, manifest: manifest),
-        throwsA(isA<PatchApplyException>()),
+        throwsA(isA<PatchApplyException>()
+            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)),
       );
       expect(_hashOf(base), beforeHash); // rollback שמר על המקור
     });
@@ -580,7 +602,8 @@ void main() {
       expect(result.resultHash, manifest.toContentHash);
     }, timeout: const Timeout(Duration(minutes: 10)));
 
-    test('apply v14→v15r (patch חלופי, סכמה-1) מצליח ומגיע ל-toContentHash', () {
+    test('apply v14→v15r (patch חלופי, סכמה-1) מצליח ומגיע ל-toContentHash',
+        () {
       final dbPath = cloneDb('$dir/v14/seforim.db');
       final patchPath = '$dir/v15/patch-v14-v15r.db';
       if (dbPath == null || !File(patchPath).existsSync()) {

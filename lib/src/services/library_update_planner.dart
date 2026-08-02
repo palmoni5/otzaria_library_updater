@@ -15,6 +15,9 @@ class LibraryUpdatePlanner {
   /// [latestVersion] — הגרסה הגבוהה ביותר הזמינה ב-releases.
   /// [edges] — כל ה-patches הזמינים.
   /// [latestFullDbAsset] / [latestReleaseTag] — ה-DB המלא ל-fallback.
+  /// [localContentHash] — hash לוגי ידוע של ה-DB המקומי (מחותמת שנשמרה
+  /// בעדכון קודם). אם ניתן ואינו תואם לנקודת המוצא של מסלול הדלתא —
+  /// הדלתא ודאי תיכשל, ולכן נבחרת הורדה מלאה מראש.
   LibraryUpdatePlan plan({
     required int localVersion,
     required bool hasLocalVersionMeta,
@@ -22,6 +25,7 @@ class LibraryUpdatePlanner {
     required List<PatchEdge> edges,
     ReleaseAsset? latestFullDbAsset,
     String? latestReleaseTag,
+    String? localContentHash,
   }) {
     if (!hasLocalVersionMeta) {
       return _fullOrBlocked(
@@ -29,6 +33,7 @@ class LibraryUpdatePlanner {
         latestVersion: latestVersion,
         asset: latestFullDbAsset,
         tag: latestReleaseTag,
+        targetContentHash: _targetContentHash(edges, latestVersion),
         reason: 'גרסת ה-DB המקומי אינה ידועה (חסר schema_meta.db_version)',
       );
     }
@@ -42,10 +47,24 @@ class LibraryUpdatePlanner {
 
     final path = _findBestPath(edges, localVersion, latestVersion);
     if (path != null && path.isNotEmpty) {
+      if (localContentHash != null &&
+          localContentHash != path.first.manifest.fromContentHash) {
+        return _fullOrBlocked(
+          localVersion: localVersion,
+          latestVersion: latestVersion,
+          asset: latestFullDbAsset,
+          tag: latestReleaseTag,
+          targetContentHash: _targetContentHash(edges, latestVersion),
+          reason: 'תוכן ה-DB המקומי שונה מהצפוי לגרסה $localVersion — '
+              'מסלול דלתא ייכשל',
+        );
+      }
       return LibraryUpdatePlan.delta(
         localVersion: localVersion,
         targetVersion: latestVersion,
         steps: path,
+        fullDbAsset: latestFullDbAsset,
+        fullDbReleaseTag: latestReleaseTag,
       );
     }
 
@@ -54,6 +73,7 @@ class LibraryUpdatePlanner {
       latestVersion: latestVersion,
       asset: latestFullDbAsset,
       tag: latestReleaseTag,
+      targetContentHash: _targetContentHash(edges, latestVersion),
       reason: 'אין מסלול דלתא רציף מגרסה $localVersion לגרסה $latestVersion',
     );
   }
@@ -64,6 +84,7 @@ class LibraryUpdatePlanner {
     required ReleaseAsset? asset,
     required String? tag,
     required String reason,
+    String? targetContentHash,
   }) {
     if (asset != null && tag != null) {
       return LibraryUpdatePlan.fullDownload(
@@ -72,6 +93,7 @@ class LibraryUpdatePlanner {
         asset: asset,
         releaseTag: tag,
         reason: reason,
+        targetContentHash: targetContentHash,
       );
     }
     return LibraryUpdatePlan.blocked(
@@ -79,6 +101,15 @@ class LibraryUpdatePlanner {
       targetVersion: latestVersion,
       reason: '$reason, ואין DB מלא זמין להורדה',
     );
+  }
+
+  /// ה-hash הצפוי של גרסת היעד, מכל patch שמוביל אליה — לחותמת אחרי
+  /// הורדה מלאה. null כשאין אף patch אל [latestVersion].
+  String? _targetContentHash(List<PatchEdge> edges, int latestVersion) {
+    for (final edge in edges) {
+      if (edge.toVersion == latestVersion) return edge.manifest.toContentHash;
+    }
+    return null;
   }
 
   /// מוצא מסלול ממזער (מספר patches, ואז גודל דחוס כולל) מ-[from] ל-[to].

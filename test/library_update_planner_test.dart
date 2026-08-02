@@ -47,6 +47,7 @@ void main() {
     bool hasMeta = true,
     ReleaseAsset? full = _fullAsset,
     String? tag = 'v3',
+    String? localContentHash,
   }) =>
       planner.plan(
         localVersion: local,
@@ -55,6 +56,7 @@ void main() {
         edges: edges,
         latestFullDbAsset: full,
         latestReleaseTag: tag,
+        localContentHash: localContentHash,
       );
 
   group('LibraryUpdatePlanner', () {
@@ -159,6 +161,69 @@ void main() {
       expect(p.kind, LibraryUpdatePlanKind.delta);
       expect(p.deltaSteps, hasLength(1));
       expect(p.deltaSteps.single.toVersion, 2);
+    });
+
+    test('localContentHash תואם → delta כרגיל', () {
+      final p = plan(
+        local: 1,
+        latest: 3,
+        edges: [_edge(1, 2), _edge(2, 3)],
+        localContentHash: 'hash1',
+      );
+      expect(p.kind, LibraryUpdatePlanKind.delta);
+    });
+
+    test('localContentHash שונה מנקודת המוצא → fullDownload מראש', () {
+      final p = plan(
+        local: 1,
+        latest: 3,
+        edges: [_edge(1, 2), _edge(2, 3)],
+        localContentHash: 'diverged',
+      );
+      expect(p.kind, LibraryUpdatePlanKind.fullDownload);
+      expect(p.reason, contains('שונה מהצפוי'));
+      expect(p.targetContentHash, 'hash3');
+    });
+
+    test('localContentHash שונה ואין DB מלא → blocked', () {
+      final p = plan(
+        local: 1,
+        latest: 3,
+        edges: [_edge(1, 2), _edge(2, 3)],
+        localContentHash: 'diverged',
+        full: null,
+        tag: null,
+      );
+      expect(p.kind, LibraryUpdatePlanKind.blocked);
+    });
+
+    test('תוכנית delta נושאת fallback ו-targetContentHash', () {
+      final p = plan(local: 1, latest: 3, edges: [_edge(1, 2), _edge(2, 3)]);
+      expect(p.targetContentHash, 'hash3');
+      final fallback = p.toFullDownloadFallback(reason: 'סטיית תוכן');
+      expect(fallback, isNotNull);
+      expect(fallback!.kind, LibraryUpdatePlanKind.fullDownload);
+      expect(fallback.fullDbAsset, _fullAsset);
+      expect(fallback.targetContentHash, 'hash3');
+      expect(fallback.reason, 'סטיית תוכן');
+    });
+
+    test('toFullDownloadFallback בלי asset → null', () {
+      final p = plan(
+        local: 1,
+        latest: 3,
+        edges: [_edge(1, 2), _edge(2, 3)],
+        full: null,
+        tag: null,
+      );
+      expect(p.kind, LibraryUpdatePlanKind.delta);
+      expect(p.toFullDownloadFallback(), isNull);
+    });
+
+    test('fullDownload בהיעדר מסלול נושא targetContentHash מה-edges', () {
+      final p = plan(local: 1, latest: 3, edges: [_edge(2, 3)]);
+      expect(p.kind, LibraryUpdatePlanKind.fullDownload);
+      expect(p.targetContentHash, 'hash3');
     });
   });
 }

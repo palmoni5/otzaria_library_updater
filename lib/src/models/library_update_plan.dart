@@ -58,7 +58,8 @@ class LibraryUpdatePlan extends Equatable {
   /// שלבי הדלתא להחלה, בסדר (עבור [LibraryUpdatePlanKind.delta]).
   final List<PatchEdge> deltaSteps;
 
-  /// ה-DB המלא להורדה (עבור [LibraryUpdatePlanKind.fullDownload]).
+  /// ה-DB המלא להורדה. בתוכנית fullDownload — היעד להורדה; בתוכנית delta —
+  /// fallback ל-[toFullDownloadFallback] אם ההחלה נכשלת על סטיית תוכן.
   final ReleaseAsset? fullDbAsset;
 
   /// ה-tag של ה-release שממנו יורד ה-DB המלא.
@@ -66,6 +67,10 @@ class LibraryUpdatePlan extends Equatable {
 
   /// הסבר קריא — חובה ל-[LibraryUpdatePlanKind.blocked], אופציונלי לאחרים.
   final String? reason;
+
+  /// ה-content hash הלוגי הצפוי של ה-DB בגרסת היעד, אם ידוע. משמש להחתמת
+  /// ה-DB אחרי עדכון מוצלח לזיהוי סטיית תוכן בתכנון הבא.
+  final String? targetContentHash;
 
   const LibraryUpdatePlan._({
     required this.kind,
@@ -75,6 +80,7 @@ class LibraryUpdatePlan extends Equatable {
     this.fullDbAsset,
     this.fullDbReleaseTag,
     this.reason,
+    this.targetContentHash,
   });
 
   /// הספרייה מעודכנת — אין מה לעשות.
@@ -88,17 +94,24 @@ class LibraryUpdatePlan extends Equatable {
         targetVersion: targetVersion ?? localVersion,
       );
 
-  /// מסלול דלתא — סדרת patches להחלה.
+  /// מסלול דלתא — סדרת patches להחלה. [fullDbAsset]/[fullDbReleaseTag]
+  /// אופציונליים ומאפשרים [toFullDownloadFallback] אם ההחלה תיכשל.
   factory LibraryUpdatePlan.delta({
     required int localVersion,
     required int targetVersion,
     required List<PatchEdge> steps,
+    ReleaseAsset? fullDbAsset,
+    String? fullDbReleaseTag,
   }) =>
       LibraryUpdatePlan._(
         kind: LibraryUpdatePlanKind.delta,
         localVersion: localVersion,
         targetVersion: targetVersion,
         deltaSteps: List.unmodifiable(steps),
+        fullDbAsset: fullDbAsset,
+        fullDbReleaseTag: fullDbReleaseTag,
+        targetContentHash:
+            steps.isEmpty ? null : steps.last.manifest.toContentHash,
       );
 
   /// מסלול הורדה מלאה.
@@ -108,6 +121,7 @@ class LibraryUpdatePlan extends Equatable {
     required ReleaseAsset asset,
     required String releaseTag,
     String? reason,
+    String? targetContentHash,
   }) =>
       LibraryUpdatePlan._(
         kind: LibraryUpdatePlanKind.fullDownload,
@@ -116,6 +130,7 @@ class LibraryUpdatePlan extends Equatable {
         fullDbAsset: asset,
         fullDbReleaseTag: releaseTag,
         reason: reason,
+        targetContentHash: targetContentHash,
       );
 
   /// מצב חסום — דורש פעולה ידנית.
@@ -130,6 +145,22 @@ class LibraryUpdatePlan extends Equatable {
         targetVersion: targetVersion,
         reason: reason,
       );
+
+  /// ממיר תוכנית דלתא לתוכנית הורדה מלאה — fallback כשההחלה נכשלת על סטיית
+  /// תוכן. מחזיר null אם אין DB מלא זמין (ואז נשארים במסך השגיאה).
+  LibraryUpdatePlan? toFullDownloadFallback({String? reason}) {
+    final asset = fullDbAsset;
+    final tag = fullDbReleaseTag;
+    if (asset == null || tag == null) return null;
+    return LibraryUpdatePlan.fullDownload(
+      localVersion: localVersion,
+      targetVersion: targetVersion,
+      asset: asset,
+      releaseTag: tag,
+      reason: reason,
+      targetContentHash: targetContentHash,
+    );
+  }
 
   /// גודל ההורדה הכולל בבייטים (דחוס) — לתצוגה למשתמש.
   int get totalDownloadSize {
@@ -153,5 +184,6 @@ class LibraryUpdatePlan extends Equatable {
         fullDbAsset,
         fullDbReleaseTag,
         reason,
+        targetContentHash,
       ];
 }

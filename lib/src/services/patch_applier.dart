@@ -64,7 +64,12 @@ class PatchApplyResult {
 /// נזרק כאשר preflight או אימות נכשלים — ה-DB לא שונה (לא בוצע commit).
 class PatchApplyException implements Exception {
   final String message;
-  const PatchApplyException(this.message);
+
+  /// true כשה-hash הלוגי אינו תואם (from או to): תוכן ה-DB המקומי סטה
+  /// מהקנוני, כל ניסיון דלתא חוזר ייכשל — נדרש fallback להורדה מלאה.
+  final bool isContentMismatch;
+
+  const PatchApplyException(this.message, {this.isContentMismatch = false});
   @override
   String toString() => 'PatchApplyException: $message';
 }
@@ -176,6 +181,7 @@ class PatchApplier {
           throw PatchApplyException(
             'ה-DB המקומי שונה מהצפוי — hash לא תואם ל-fromContentHash. '
             'נדרשת הורדה מלאה.',
+            isContentMismatch: true,
           );
         }
       }
@@ -228,6 +234,7 @@ class PatchApplier {
         throw PatchApplyException(
           'ה-hash אחרי apply ($resultHash) אינו תואם ל-toContentHash '
           '(${manifest.toContentHash})',
+          isContentMismatch: true,
         );
       }
 
