@@ -243,7 +243,12 @@ void main() {
         () =>
             _applier.apply(dbPath: base, patchPath: patch, manifest: manifest),
         throwsA(isA<PatchApplyException>()
-            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)),
+            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)
+            .having(
+              (e) => e.hashMismatchStage,
+              'hashMismatchStage',
+              PatchHashMismatchStage.fromContentHash,
+            )),
       );
       expect(_hashOf(base), beforeHash);
     });
@@ -267,7 +272,12 @@ void main() {
         () =>
             _applier.apply(dbPath: base, patchPath: patch, manifest: manifest),
         throwsA(isA<PatchApplyException>()
-            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)),
+            .having((e) => e.isContentMismatch, 'isContentMismatch', isTrue)
+            .having(
+              (e) => e.hashMismatchStage,
+              'hashMismatchStage',
+              PatchHashMismatchStage.toContentHash,
+            )),
       );
       expect(_hashOf(base), beforeHash); // rollback שמר על המקור
     });
