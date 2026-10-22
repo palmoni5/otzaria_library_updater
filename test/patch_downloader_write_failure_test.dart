@@ -281,4 +281,58 @@ void main() {
     expect(result.uncaught, isEmpty);
     expect(result.error, isA<PatchDownloadException>());
   });
+
+  test('כשל כתיבה בטווח של הורדה מפוצלת כשהמקור ממתין: נכשלת מיד ועוצרת אותו',
+      () async {
+    final dest = '${tmp.path}${Platform.pathSeparator}model.onnx';
+    final cancelled = Completer<void>();
+    final downloader = PatchDownloader(
+      networkRetryDelays: const [],
+      stallTimeout: const Duration(hours: 1),
+      maxConnections: 2,
+      segmentThresholdBytes: 100,
+      httpClient: MockClient.streaming((request, _) async {
+        final range =
+            RegExp(r'bytes=(\d+)-(\d+)').firstMatch(request.headers['Range']!)!;
+        final start = int.parse(range.group(1)!);
+        final end = int.parse(range.group(2)!);
+        final segment = Uint8List.sublistView(body, start, end + 1);
+        // טווח 0 מגיע שלם; טווח 1 שולח צ'אנק אחד ונשאר פתוח.
+        final stream = start == 0
+            ? Stream<List<int>>.value(segment)
+            : (StreamController<List<int>>(
+                onCancel: () {
+                  if (!cancelled.isCompleted) cancelled.complete();
+                },
+              )..add(Uint8List.sublistView(segment, 0, 100)))
+                .stream;
+        return http.StreamedResponse(stream, 206,
+            contentLength: segment.length,
+            headers: {
+              'etag': '"e1"',
+              'content-range': 'bytes $start-$end/${body.length}',
+            });
+      }),
+      decompress: (_) async => null,
+    );
+
+    final result = await _runCapturing(
+      _FailingDiskOverrides('$dest.seg-1'),
+      () => downloader.downloadToFile(
+        url: 'https://x/model.onnx',
+        destPath: dest,
+        expectedSize: body.length,
+        expectedSha256: bodyHash,
+        resumeToken: bodyHash,
+      ),
+    );
+
+    expect(result.uncaught, isEmpty);
+    expect(
+      result.error,
+      isA<FileSystemException>()
+          .having((e) => e.osError?.errorCode, 'errno', 1006),
+    );
+    await cancelled.future.timeout(const Duration(seconds: 1));
+  });
 }

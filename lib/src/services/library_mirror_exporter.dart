@@ -54,9 +54,9 @@ String mirrorRelativePath(String path,
 /// המצב הזה נועד לחסוך אותו, לא להשאיר את המשתמש עם העדכון היקר מבין
 /// השניים.
 ///
-/// **הנכסים יורדים במקביל, הגדול ראשון** — ראו [DownloadScheduler]. זה כל
-/// ה"מאיץ" שאפשר לבנות מול GitHub: פיצול קובץ בודד לכמה חיבורים אינו עובד
-/// שם, אבל קובצי ה-patch רצים לצד המסד הגדול במקום לחכות לו.
+/// **הנכסים יורדים במקביל, הגדול ראשון** — ראו [DownloadScheduler]: קובצי
+/// ה-patch רצים לצד המסד הגדול במקום לחכות לו. קובץ גדול יורד גם בכמה
+/// טווחים כשהשרת מכבד `Range` — ראו [PatchDownloader.maxConnections].
 class LibraryMirrorExporter {
   LibraryMirrorExporter({
     GithubLibraryReleaseClient? client,
@@ -66,6 +66,8 @@ class LibraryMirrorExporter {
     required this.supportedDbSchemaVersion,
     DownloadScheduler? scheduler,
     int? Function(String path)? freeBytesFor,
+    int maxConnections = PatchDownloader.defaultMaxConnections,
+    int segmentThresholdBytes = PatchDownloader.defaultSegmentThresholdBytes,
   })  : _scheduler = scheduler ?? DownloadScheduler(),
         _freeBytesFor = freeBytesFor ?? DiskSpaceProbe.freeBytesFor,
         _client = client ?? GithubLibraryReleaseClient(),
@@ -77,8 +79,25 @@ class LibraryMirrorExporter {
       // הייצוא רק מוריד לדיסק ואינו מחלץ דבר — `downloadAndExtract` לא נקרא
       // כאן, ולכן אין למי לספק פונקציית חילוץ.
       decompress: _neverDecompress,
+      maxConnections:
+          _connectionsPerFile(maxConnections, _scheduler.maxConcurrent),
+      segmentThresholdBytes: segmentThresholdBytes,
     );
   }
+
+  /// תקרת החיבורים של כל הייצוא. כל משבצת של ה-scheduler מקבלת חלק שווה,
+  /// כך שגם כשכל המשבצות מורידות קבצים גדולים הסכום אינו עובר אותה.
+  static const int maxTotalConnections = 8;
+
+  static int _connectionsPerFile(int requested, int maxConcurrent) {
+    final share = maxTotalConnections ~/ maxConcurrent;
+    final cap = share < 1 ? 1 : share;
+    if (requested < 1) return 1;
+    return requested < cap ? requested : cap;
+  }
+
+  /// כמה חיבורים פותח קובץ גדול אחד בייצוא הזה.
+  int get connectionsPerFile => _downloader.maxConnections;
 
   /// כמה releases אחרונים נשמרים במראה — ראו [recentReleases]. עשרה מכסים
   /// בפועל מחשב שלא עודכן כמה חודשים, בעלות של כמה עשרות MB.
@@ -100,9 +119,8 @@ class LibraryMirrorExporter {
   final http.Client _httpClient;
   final bool _ownsHttpClient;
 
-  /// מה שמריץ את הנכסים במקביל — ראו [DownloadScheduler] להסבר למה זו
-  /// ההאצה היחידה שאפשרית מול GitHub. ניתן להזרקה כדי שהקבצים הנלווים
-  /// יחלקו את אותה תקרת חיבורים ולא יפתחו תקרה משלהם.
+  /// מה שמריץ את הנכסים במקביל — ראו [DownloadScheduler]. ניתן להזרקה כדי
+  /// שהקבצים הנלווים יחלקו את אותה תקרת חיבורים ולא יפתחו תקרה משלהם.
   final DownloadScheduler _scheduler;
 
   final int? Function(String path) _freeBytesFor;
@@ -656,12 +674,17 @@ class LibraryMirrorExporter {
         if (missing <= 0) continue;
         needed += missing;
         final split = asset.split;
-        if (split != null) {
+        if (split == null) {
+          needed += _segmentAssemblyOverhead(asset.size);
+        } else {
           final partsDir = splitPartsDir(existing.path);
           for (final part in split.parts) {
             final file = File(p.join(partsDir, part.name));
             final partHave = file.existsSync() ? file.lengthSync() : 0;
-            if (part.size > partHave) needed += part.size - partHave;
+            if (part.size > partHave) {
+              needed +=
+                  part.size - partHave + _segmentAssemblyOverhead(part.size);
+            }
           }
         }
       }
@@ -674,6 +697,13 @@ class LibraryMirrorExporter {
       DiskSpaceProbe.formatBytes(needed),
       DiskSpaceProbe.formatBytes(free),
     ));
+  }
+
+  /// קובץ שיורד בטווחים מחזיק בזמן הצירוף עותק נוסף של הטווח הגדול ביותר.
+  int _segmentAssemblyOverhead(int size) {
+    final connections = _downloader.maxConnections;
+    if (connections < 2 || size < _downloader.segmentThresholdBytes) return 0;
+    return (size + connections - 1) ~/ connections;
   }
 
   /// כמה מהנכס כבר יושב על הדיסק שלם, כלומר לא יעבור ברשת. התנאי זהה לזה
